@@ -226,6 +226,8 @@ h1{font-family:var(--display);font-weight:800;font-size:36px;line-height:1}
 .tbl tr:last-child td{border-bottom:0}
 .tbl td:last-child{text-align:right}
 .notice{background:var(--amber-soft);color:var(--text);border-radius:14px;padding:12px 14px;font-size:14.5px;margin:10px 0}
+.backup-line{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:12px;padding:4px 14px;border-radius:14px;background:var(--bg2);font-size:14.5px;color:var(--muted)}
+.backup-line.due{background:var(--amber-soft);color:var(--text)}
 .toast{position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + 12px);transform:translate(-50%,-140%);z-index:60;background:var(--text);color:var(--bg);padding:12px 18px;border-radius:14px;font-weight:600;font-size:15px;max-width:calc(100% - 32px);transition:transform .25s ease;box-shadow:0 8px 24px rgba(0,0,0,.35);text-align:center}
 .toast.show{transform:translate(-50%,0)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
@@ -362,7 +364,7 @@ let storageOK=true;
 function defaults(){
   return {
     schema:SCHEMA, createdAt:Date.now(),
-    settings:{weeklyGoal:4, defaultRest:90, theme:'dark', inc:Object.assign({},DEFAULT_INC)},
+    settings:{weeklyGoal:4, defaultRest:90, theme:'dark', backupDays:7, lastBackup:null, inc:Object.assign({},DEFAULT_INC)},
     exercises:SEED.map(a=>({id:'s_'+a[0],name:a[1],muscle:a[2],equipment:a[3],sets:a[4],repMin:a[5],repMax:a[6],rest:a[7],instructions:a[8],step:null,custom:false,archived:false})),
     programs:SEED_PROGRAMS.map(p=>({id:p[0],name:p[1],items:p[2].map(x=>'s_'+x)})),
     workouts:[], active:null, body:[], cardio:[]
@@ -637,6 +639,7 @@ function vHome(){
   h+='<section class="stats" aria-label="Summary">'+metric('Body weight',bw,'kg',false)+metric('Body fat',bf,'%',true)+
     '<div class="stat"><div class="lab">This week</div><div class="val">'+wkN+'<small>/ '+goal+'</small></div><div class="bar" aria-label="'+Math.min(100,Math.round(wkN/goal*100))+'% of weekly goal"><i style="width:'+Math.min(100,wkN/goal*100)+'%"></i></div><div class="delta">'+Math.min(100,Math.round(wkN/goal*100))+'% of weekly goal</div></div>'+
     '<div class="stat"><div class="lab">Week streak</div><div class="val">'+streak+'<small>'+(streak===1?'week':'weeks')+'</small></div><div class="delta">Weeks with '+goal+'+ workouts</div></div></section>';
+  if(hasData())h+='<div class="backup-line'+(backupDue()?' due':'')+'"><span>'+backupAgo()+'</span><button class="link" data-act="backup-now">Back up now</button></div>';
   h+='<h2 class="st">Last workout</h2>';
   if(lw){const sets=lw.exercises.reduce((a,e)=>a+e.sets.length,0);
     h+='<div class="card"><button class="row" data-act="w-detail" data-id="'+lw.id+'"><div class="grow"><div class="t">'+esc(lw.name)+'</div><div class="s">'+fmtDay(lw.start)+', '+fmtDur(lw.end-lw.start)+', '+lw.exercises.length+' exercises, '+sets+' sets</div></div><div class="r"><div class="big">'+fmtInt(lw.exercises.reduce((a,e)=>a+vol(e.sets),0))+'</div><div class="s">kg volume</div></div></button></div>';
@@ -896,11 +899,11 @@ async function finishWorkout(){
   S.workouts.unshift(w);S.workouts.sort((x,y)=>y.start-x.start);S.active=null;save();askPersist();releaseAwake();
   T.visible=false;T.running=false;go('home');
   const ups=exs.map(e=>({e:e,rec:recommend(ex(e.exId))})).filter(o=>o.rec&&o.rec.kind==='increase');
-  const totalVol=exs.reduce((n,e)=>n+vol(e.sets),0),sets=exs.reduce((n,e)=>n+e.sets.length,0);
+  const due=backupDue();const totalVol=exs.reduce((n,e)=>n+vol(e.sets),0),sets=exs.reduce((n,e)=>n+e.sets.length,0);
   openSheet('<h2>Workout saved</h2><p class="lead">'+esc(w.name)+', '+fmtDur(w.end-w.start)+'</p><div class="bigstats"><div><b>'+exs.length+'</b><span>Exercises</span></div><div><b>'+sets+'</b><span>Sets</span></div><div><b>'+(totalVol>=10000?fmt(totalVol/1000,1)+'k':fmtInt(totalVol))+'</b><span>kg volume</span></div></div>'+
     '<div class="card" style="margin-bottom:16px">'+summary.map(s=>'<div class="row"><div class="grow"><div class="t">'+esc(s.e.name)+'</div><div class="s">'+esc(setsStr(s.e.sets))+'</div></div>'+chip(s.status,s.status==='up'?s.delta:null)+'</div>').join('')+'</div>'+
     (ups.length?'<div class="panel"><h3>Ready to go heavier next time</h3><div class="s" style="margin-bottom:4px">You will be asked to confirm before any weight changes.</div>'+ups.map(o=>'<div class="row" style="padding:10px 4px"><div class="grow t">'+esc(o.e.name)+'</div><div class="big" style="color:var(--green)">'+fmt(o.rec.to)+' kg</div></div>').join('')+'</div>':'')+
-    '<button class="btn primary" data-act="sheet-close">Done</button>',{});
+    (due?'<div class="panel"><h3>Time for a backup</h3><div class="s">'+backupAgo()+'. Save a copy to Files or iCloud Drive in case this phone ever loses its data.</div><div class="stack" style="margin-top:10px"><button class="btn primary" data-act="bk-now">Back up now</button><button class="btn quiet" data-act="sheet-close">Later</button></div></div>':'<button class="btn primary" data-act="sheet-close">Done</button>'),{'bk-now':async()=>{if(await backupNow()){closeSheet();render();}}});
 }
 function discardActive(){S.active=null;save();releaseAwake();T.visible=false;T.running=false;go('home');toast('Workout discarded');}
 function exMenu(i){
@@ -1129,9 +1132,10 @@ function settingsSheet(){
   openSheet('<div class="sheet-head"><h2>Settings</h2><button class="icon-btn" data-act="sheet-close" aria-label="Close">'+I.x+'</button></div>'+
     '<div class="g2">'+field('Weekly goal (workouts)','<input class="input" id="st-goal" inputmode="numeric" value="'+S.settings.weeklyGoal+'">')+field('Default rest (seconds)','<input class="input" id="st-rest" inputmode="numeric" value="'+S.settings.defaultRest+'">')+'</div>'+
     '<div class="field"><span>Weight step by equipment (kg), used for increase suggestions</span><div class="g3">'+['Machine','Cable','Dumbbell','Barbell','Smith machine','Kettlebell'].map(k=>'<label class="field" style="margin:0"><span style="font-size:13px">'+k+'</span><input class="input" inputmode="decimal" data-inc="'+k+'" value="'+S.settings.inc[k]+'"></label>').join('')+'</div></div>'+
+    field('Backup reminder after a workout','<select class="select" id="st-bk">'+[[0,'Off'],[3,'Every 3 days'],[7,'Every 7 days'],[14,'Every 14 days']].map(o=>'<option value="'+o[0]+'"'+((+S.settings.backupDays||0)===o[0]?' selected':'')+'>'+o[1]+'</option>').join('')+'</select>')+
     field('Appearance','<select class="select" id="st-theme">'+[['dark','Dark'],['light','Light']].map(t=>'<option value="'+t[0]+'"'+(S.settings.theme===t[0]?' selected':'')+'>'+t[1]+'</option>').join('')+'</select>')+
     '<button class="btn primary" data-act="st-save">Save settings</button>'+
-    '<h2 class="st">Your data</h2><p class="lead">Everything is stored on this device only, in this browser. Nothing is uploaded. '+n.w+' workouts, '+n.s+' sets, '+n.b+' body entries, '+n.c+' cardio sessions, '+n.x+' custom exercises.</p>'+
+    '<h2 class="st">Your data</h2><p class="lead">Everything is stored on this device only, in this browser. Nothing is uploaded. '+backupAgo()+'. '+n.w+' workouts, '+n.s+' sets, '+n.b+' body entries, '+n.c+' cardio sessions, '+n.x+' custom exercises.</p>'+
     (storageOK?'':'<div class="notice">Storage is blocked in this browser, so data is lost when you close the app.</div>')+
     '<div class="stack"><button class="btn" data-act="st-export">Export full backup (JSON)</button><button class="btn" data-act="st-csv">Export sets as spreadsheet (CSV)</button><button class="btn" data-act="st-import">Import a backup</button><button class="btn danger quiet" data-act="st-wipe">Erase all data</button></div>'+
     '<p class="small faint" style="margin-top:16px">Tip: export a backup every week or two and keep it in your files or iCloud Drive.</p>',{
@@ -1140,8 +1144,8 @@ function settingsSheet(){
       if(g<1||g>14){toast('Weekly goal must be 1 to 14');return;}if(r<5){toast('Rest must be at least 5 seconds');return;}
       let bad=false;document.querySelectorAll('[data-inc]').forEach(i=>{const v=num(i.value);if(v==null||v<0)bad=true;else S.settings.inc[i.dataset.inc]=v;});
       if(bad){toast('Weight steps must be numbers');return;}
-      S.settings.weeklyGoal=g;S.settings.defaultRest=r;S.settings.theme=$('#st-theme').value;applyTheme();save();closeSheet();render();toast('Settings saved');},
-    'st-export':()=>saveFile('gymforge-backup-'+isoOf(Date.now())+'.json',JSON.stringify(Object.assign({app:'GymForge',exportedAt:new Date().toISOString()},S),null,1),'application/json'),
+      S.settings.weeklyGoal=g;S.settings.defaultRest=r;S.settings.theme=$('#st-theme').value;S.settings.backupDays=+$('#st-bk').value;applyTheme();save();closeSheet();render();toast('Settings saved');},
+    'st-export':async()=>{if(await backupNow())settingsSheet();},
     'st-csv':()=>{
       const rows=[['date','workout','exercise','muscle','set','weight_kg','reps','volume_kg','exercise_notes']];
       S.workouts.slice().reverse().forEach(w=>w.exercises.forEach(e=>e.sets.forEach((s,j)=>{const x=ex(e.exId);rows.push([isoOf(w.start),w.name,exName(e.exId,e.name),x?x.muscle:'',j+1,s.w,s.r,r2((+s.w||0)*(+s.r||0)),j===0?e.notes||'':'']);})));
@@ -1158,16 +1162,24 @@ async function saveFile(name,text,mime){
   try{
     if(window.claude&&typeof window.claude.use==='function'){
       const dl=await window.claude.use('downloads');
-      if(dl){try{await dl.save({filename:name,data:text});toast('Saved '+name);}catch(e){if(e&&e.code!=='declined')toast('Could not save the file here');}return;}
+      if(dl){try{await dl.save({filename:name,data:text});toast('Saved '+name);return true;}catch(e){if(e&&e.code!=='declined')toast('Could not save the file here');return false;}}
     }
   }catch(e){}
   try{
     const file=new File([text],name,{type:mime});
-    if(navigator.canShare&&navigator.canShare({files:[file]})&&/iPhone|iPad|Android/i.test(navigator.userAgent)){await navigator.share({files:[file],title:name});return;}
-  }catch(e){if(e&&e.name==='AbortError')return;}
+    if(navigator.canShare&&navigator.canShare({files:[file]})&&/iPhone|iPad|Android/i.test(navigator.userAgent)){await navigator.share({files:[file],title:name});toast('Saved '+name);return true;}
+  }catch(e){if(e&&e.name==='AbortError')return false;}
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:mime}));a.download=name;document.body.appendChild(a);a.click();
-  setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1500);toast('Exported '+name);
+  setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1500);toast('Exported '+name);return true;
 }
+async function backupNow(){
+  const ok=await saveFile('gymforge-backup-'+isoOf(Date.now())+'.json',JSON.stringify(Object.assign({app:'GymForge',exportedAt:new Date().toISOString()},S),null,1),'application/json');
+  if(ok){S.settings.lastBackup=Date.now();save();if(!$('#sheet').classList.contains('open'))render();}
+  return ok;
+}
+function hasData(){return S.workouts.length||S.body.length||S.cardio.length;}
+function backupDue(){const d=+S.settings.backupDays||0;if(!d||!hasData())return false;const lb=S.settings.lastBackup;return !lb||Date.now()-lb>=d*DAY;}
+function backupAgo(){const lb=S.settings.lastBackup;if(!lb)return 'Not backed up yet';const days=Math.round((dayStart(Date.now())-dayStart(lb))/DAY);return 'Last backup '+(days===0?'today':days===1?'yesterday':days+' days ago');}
 $('#importFile').addEventListener('change',ev=>{
   const f=ev.target.files&&ev.target.files[0];if(!f)return;
   const rd=new FileReader();
@@ -1202,6 +1214,7 @@ document.addEventListener('click',async ev=>{
   switch(act){
     case 'go':go(el.dataset.to);break;
     case 'settings':settingsSheet();break;
+    case 'backup-now':backupNow();break;
     case 'start':startWorkout(el.dataset.id);break;
     case 'start-empty':startWorkout(null);break;
     case 'finish':finishWorkout();break;
